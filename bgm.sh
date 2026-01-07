@@ -3,17 +3,23 @@
 # (BGM) Bash Glucose Monitor
 #####################################
 # Using your LibreLinkUp Credentials
-# you can access their API which displays
-# Continous Glucose Monitoring Data
-# and various other things from your
-# Libre 3 sensor and Abbott Account
+# this script uses the LibreLinkUp API
+# to display your Libre 3 CGM data
+# in your Bash terminal
+#
+# An 8-bit graph representing your 
+# CGM graph will appear in your terminal.
+# Additionally you will see your current
+# BG value from your CGM highlighted in
+# either the color red, green, or yellow
+# which indicate place in range.
 
 # 01/03/2026
 # Pink 2026
 
 # LibreLinkUp Credentials
-email="***************@mail.com"
-password="*********************"
+email=""
+password=""
 
 # Color codes for text
 RED='\033[0;31m'
@@ -27,13 +33,13 @@ API_VERSION="4.16.0"
 BASE_URL="https://api.libreview.io"
 
 # Obfuscate patient credentials printed on startup
-SHOW=false
-HIDE=true 
+SHOW_INFO=false
+OBFUSCATE=true 
 
 function login_user() { 
 
     if [ -f "current_session.json" ]; then {
-        login_info=$(cat current_session.json)
+        login_info=$(<current_session.json)
     }
     else {
         local login_info=$(curl -sS -X POST \
@@ -124,20 +130,22 @@ function fetch_user_id() {
 
 function read_measurement() {
     while true; do
-        clear
+        redraw_screen
         
+        # Get latest graph data
         graph_data=$(fetch_graph)
 
-        local gd=$(echo $graph_data | jq .data.graphData)
-
-        plot_graph $gd       
+        echo -e "Welcome $(jq -r .data.user.firstName <<< $user_info),\n"
+        #echo -e "Welcome $USER,\n"
 
         local bg_value=$(echo $graph_data | jq .data.connection.glucoseMeasurement.Value)
+        local is_high=$(echo $graph_data | jq .data.connection.glucoseMeasurement.isHigh)
+        local is_low=$(echo $graph_data | jq .data.connection.glucoseMeasurement.isLow)
 
-        if [[ $bg_value -gt 180 ]]; then {
+        if [[ "$is_high" == "true" ]]; then {
             color=$YELLOW
         }
-        elif [[ $bg_value -lt 75 ]]; then {
+        elif [[ "$is_low" == "true" ]]; then {
             color=$RED
         }
         else {
@@ -145,10 +153,21 @@ function read_measurement() {
         }
         fi
 
-        echo -e "\n" $(date) "-- Current Blood Glucose measurement is: ${color}${bg_value}${NC}"
+        echo -e "\t\tYour current blood glucose measurement is: ${color}${bg_value}${NC}\t\t\t\t\t\t\t\t$(date)\n" 
+
+        # Plot latest graph data to terminal
+        local gd=$(echo $graph_data | jq .data.graphData)
+
+        plot_graph $gd   
+
+        # Wait before next plot
         sleep 60
     done
 
+}
+
+function redraw_screen() {
+  printf '\e[H\e[J'
 }
 
 function main() {
@@ -168,14 +187,12 @@ function main() {
 
     # Get the unique patient ID for the User UUID
     patient_id=$(fetch_patient_id)
-
-    echo -e "Welcome $(jq -r .data.user.firstName <<< $user_info),\n"
     
     temp_token=$token
     temp_patientId=$patient_id
 
-    if [[ $SHOW == true ]]; then
-        if [[ ${HIDE} == true ]]; then
+    if [[ $SHOW_INFO == true ]]; then
+        if [[ ${OBFUSCATE} == true ]]; then
 
             # Obfuscate the token for printing to terminal
             local token_length=$(echo $token | tr -d '\n' | wc -c)
@@ -204,39 +221,58 @@ function plot_graph() {
     cols=$(tput cols)
     n=${#values[@]}
 
-    # we print 1 char per point; leave a little margin
-    target=$(( cols - 2 ))
+    # space for " 999 | " on the left
+    ypad=7
+
+    target=$(( cols - ypad ))
     (( target < 10 )) && target=10
 
-    # step = ceil(n/target)
     step=$(( (n + target - 1) / target ))
     (( step < 1 )) && step=1
 
-    # downsample
     ds=()
     for ((i=0; i<n; i+=step)); do
-    ds+=("${values[i]}")
+        ds+=("${values[i]}")
     done
 
-    # scale
     max_value=0
+    min_value=999999
     for v in "${ds[@]}"; do
-    (( v > max_value )) && max_value=$v
+        (( v > max_value )) && max_value=$v
+        (( v < min_value )) && min_value=$v
     done
 
     graph_height=20
+
     heights=()
     for v in "${ds[@]}"; do
-    heights+=( $(( v * graph_height / max_value )) )
+        heights+=( $(( v * graph_height / max_value )) )
     done
 
-    # draw
+    # draw with scale
     for ((row=graph_height; row>=1; row--)); do
-    for h in "${heights[@]}"; do
-        (( h >= row )) && printf "█" || printf " "
+        # value at this row (top row ~= max_value)
+        label=$(( (row * max_value + graph_height - 1) / graph_height ))  # ceil
+
+        # only print tick labels every 5 rows (adjust if you want)
+        if (( row == graph_height || row == 1 || row % 5 == 0 )); then
+            printf "%3d | " "$label"
+        else
+            printf "    | "
+        fi
+
+        for h in "${heights[@]}"; do
+            (( h >= row )) && printf "█" || printf " "
+        done
+        printf "\n"
     done
-    printf "\n"
-    done
+
+    # x-axis
+    printf "    + "
+    printf "%*s\n" "${#heights[@]}" "" | tr ' ' '-'
+
+    # optional: min/max info
+    printf "\tmin=%d max=%d\n" "$min_value" "$max_value"
 
 }
 
