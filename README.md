@@ -61,7 +61,11 @@ Create a `config.json` file in the same directory as the script:
 ```json
 {
   "libre_user": "your_libre_link_up@email.com",
-  "libre_pass": "your_libre_link_up_password"
+  "libre_pass": "your_libre_link_up_password",
+  "api_url" : "https://api.libreview.io", # optional
+  "api_version" : "4.16.0", # optional
+  "obfuscate_info" : true, # optional
+  "show_user_info" : false # optional
 }
 ```
 
